@@ -15,6 +15,6 @@ PWA personnelle d'actualités : un briefing chaque matin, installable sur l'écr
 
 ## Fonctionnement
 - Flux RSS publics : Google Actualités (FR/EN), France 24, BBC News, The Verge
-- Requêtes cross-origin via replieurs CORS communautaires (allOrigins, corsproxy.io, CodeTabs), avec repli automatique
+- Requêtes cross-origin via replieurs CORS communautaires (allOrigins, RSS2JSON, CodeTabs), avec repli automatique et limitation de concurrence
 - Préférences, rubriques personnalisées et dernier briefing conservés en `localStorage`
 - `sw.js` met l'app shell en cache (démarrage instantané + hors-ligne)

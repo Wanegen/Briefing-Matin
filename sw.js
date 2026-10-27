@@ -3,7 +3,7 @@
    démarrage instantané et un mode hors-ligne. Les flux RSS externes
    passent toujours par le réseau (jamais mis en cache par ce SW). */
 
-const CACHE = "briefing-matin-v1";
+const CACHE = "briefing-matin-v2";
 const ASSETS = ["./", "./index.html", "./manifest.json", "./icon.svg"];
 
 self.addEventListener("install", (e) => {

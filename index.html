@@ -6,7 +6,7 @@
   Structure du dépôt :
     index.html (app) · manifest.json (PWA) · sw.js (cache/hors-ligne) · icon.svg
   Déploiement : GitHub Pages → Settings → Pages → branche main, racine.
-  Données : flux RSS publics via replieurs CORS (allOrigins, corsproxy.io, CodeTabs).
+  Données : flux RSS publics via replieurs CORS (allOrigins, RSS2JSON, CodeTabs).
 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -193,7 +193,7 @@
 
 <footer class="site">
   Contenus agrégés depuis des flux RSS publics : Google Actualités (FR/EN), France 24, BBC News, The Verge.<br>
-  Lecture via replieurs CORS communautaires (allOrigins, corsproxy.io, CodeTabs) — si un flux ne répond pas, l'application bascule automatiquement.
+  Lecture via replieurs CORS communautaires (allOrigins, RSS2JSON, CodeTabs) — si un flux ne répond pas, l'application bascule automatiquement.
 </footer>
 
 <!-- Dialogue : nouvelle rubrique -->
@@ -304,13 +304,23 @@ const DEFAULT_SECTIONS = [
   ]},
 ];
 
-/* Repleurs CORS de repli (essayés dans l'ordre si l'accès direct échoue) */
+/* Repleurs CORS de repli (essayés dans l'ordre si l'accès direct échoue).
+   corsproxy.io retiré (clé API obligatoire depuis 2026). */
 const PROXIES = [
-  u => u,
-  u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
-  u => "https://corsproxy.io/?url=" + encodeURIComponent(u),
-  u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
+  { kind: "xml",  build: u => u },
+  { kind: "xml",  build: u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u) },
+  { kind: "json", build: u => "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(u) },
+  { kind: "xml",  build: u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u) },
 ];
+
+/* Limite de concurrence : évite les quotas (HTTP 429) des replieurs
+   en espaçant les requêtes au lieu d'envoyer 16 flux d'un coup. */
+async function pool(tasks, limit){
+  const results = new Array(tasks.length); let i = 0;
+  async function run(){ while (i < tasks.length){ const idx = i++; results[idx] = await tasks[idx](); } }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, run));
+  return results;
+}
 
 /* ══════════════ 2. STOCKAGE (localStorage sécurisé) ══════════════ */
 
@@ -348,16 +358,28 @@ async function fetchFeed(url){
   let lastErr = null;
   for (const p of PROXIES){
     try{
-      const res = await fetchWithTimeout(p(url), 12000);
+      const res = await fetchWithTimeout(p.build(url), 12000);
       if (!res.ok) throw new Error("HTTP " + res.status);
       const text = await res.text();
       if (!text || text.length < 40) throw new Error("Réponse vide");
-      const items = parseFeed(text);
+      const items = p.kind === "json" ? itemsFromJson(text) : parseFeed(text);
       if (items.length) return items;
       throw new Error("Aucun élément");
     }catch(e){ lastErr = e; }
   }
   throw lastErr || new Error("Flux inaccessible");
+}
+
+/* Repli JSON (rss2json) : convertit un flux RSS en JSON si le XML est bloqué */
+function itemsFromJson(json){
+  const d = JSON.parse(json);
+  if (!d || d.status !== "ok" || !Array.isArray(d.items)) throw new Error((d && d.message) || "Flux invalide");
+  return d.items.map(n => ({
+    title: (n.title || "").trim(),
+    link: n.link || "",
+    source: "",
+    date: (n.pubDate && Date.parse(n.pubDate)) || 0,
+  })).filter(i => i.title && i.link);
 }
 
 function parseFeed(xmlText){
@@ -413,7 +435,7 @@ async function refreshAll(){
   render(); // squelettes de chargement
   setStatus("⏳ Actualisation des flux…");
   const sections = [...DEFAULT_SECTIONS, ...store.get(K.custom, [])];
-  const entries = await Promise.all(sections.map(async s => [s.id, await loadSection(s)]));
+  const entries = await pool(sections.map(s => async () => [s.id, await loadSection(s)]), 3);
   const map = {}; entries.forEach(([id, r]) => map[id] = r);
   data = { updatedAt: Date.now(), sections: map };
   store.set(K.data, data);
