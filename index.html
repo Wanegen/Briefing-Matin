@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="fr" data-theme="dark">
+<head>
+<!--
+  Briefing du Matin — PWA personnelle d'actualités
+  Structure du dépôt :
+    index.html (app) · manifest.json (PWA) · sw.js (cache/hors-ligne) · icon.svg
+  Déploiement : GitHub Pages → Settings → Pages → branche main, racine.
+  Données : flux RSS publics via replieurs CORS (allOrigins, corsproxy.io, CodeTabs).
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="description" content="Briefing matinal personnel : politique, monde, culture, sorties, expos Lyon & Paris.">
+<meta name="theme-color" content="#0f172a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Briefing">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<title>Briefing du Matin</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --bg-soft:#eef0f6; --card:#ffffff; --text:#111827; --muted:#6b7280;
+    --border:#e5e7eb; --accent:#e0562f; --accent-2:#b8860b; --chip:#f3f4f6; --link:#1d4ed8;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0f172a; --bg-soft:#131c33; --card:#1a2440; --text:#e5e9f2; --muted:#93a0b8;
+    --border:#2a3654; --accent:#ff7a59; --accent-2:#f0b429; --chip:#22304f; --link:#7ab3ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    line-height:1.45; -webkit-font-smoothing:antialiased;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  a{color:var(--link); text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* ── En-tête ─────────────────────────────── */
+  header.top{
+    position:sticky; top:0; z-index:10;
+    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+    background:color-mix(in srgb, var(--bg) 82%, transparent);
+    border-bottom:1px solid var(--border);
+  }
+  .top-inner{
+    max-width:1200px; margin:0 auto; padding:12px 16px;
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  }
+  .logo{display:flex; align-items:center; gap:10px; min-width:0}
+  .logo svg{flex:none}
+  .logo h1{font-size:1.05rem; margin:0; letter-spacing:.2px; white-space:nowrap}
+  .logo .sub{font-size:.75rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .spacer{flex:1}
+  .chip{
+    font-size:.75rem; color:var(--muted); background:var(--chip);
+    border:1px solid var(--border); border-radius:999px; padding:3px 10px; white-space:nowrap;
+  }
+  .btn{
+    display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+    background:var(--card); color:var(--text); border:1px solid var(--border);
+    border-radius:10px; padding:8px 12px; font-size:.85rem; font-weight:500;
+  }
+  .btn:hover{border-color:var(--accent)}
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff}
+  .btn.icon{padding:8px}
+  .btn svg{width:16px; height:16px; flex:none}
+  .btn[hidden]{display:none}
+  .btn:disabled{opacity:.55; cursor:default}
+
+  /* ── Grille de sections ──────────────────── */
+  main{max-width:1200px; margin:0 auto; padding:20px 16px 40px}
+  .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(330px,1fr)); gap:16px}
+  .card{
+    background:var(--card); border:1px solid var(--border); border-radius:16px;
+    padding:14px 16px; display:flex; flex-direction:column; min-width:0;
+  }
+  .card-head{display:flex; align-items:center; gap:10px; margin-bottom:10px}
+  .card-head .emoji{font-size:1.3rem}
+  .card-head h2{font-size:.95rem; margin:0; flex:1; min-width:0}
+  .badge{
+    font-size:.7rem; font-weight:600; background:var(--chip); color:var(--muted);
+    border-radius:999px; padding:2px 8px; border:1px solid var(--border);
+  }
+  .badge.new{background:color-mix(in srgb, var(--accent) 18%, transparent); color:var(--accent); border-color:color-mix(in srgb, var(--accent) 40%, transparent)}
+  .card-head .del{
+    background:none; border:none; color:var(--muted); cursor:pointer; padding:2px;
+    font-size:.9rem; line-height:1; border-radius:6px;
+  }
+  .card-head .del:hover{color:#ef4444}
+  ul.items{list-style:none; margin:0; padding:0; flex:1}
+  ul.items li{padding:8px 0; border-top:1px solid var(--border)}
+  ul.items li:first-child{border-top:none}
+  ul.items li.seen a{color:var(--muted)}
+  ul.items li.seen .t{font-weight:400}
+  .t{font-size:.86rem; font-weight:600; display:block}
+  .meta{font-size:.72rem; color:var(--muted); margin-top:2px}
+  .feed-err{font-size:.72rem; color:var(--accent-2); margin-top:8px}
+  .skel{height:14px; border-radius:6px; background:var(--chip); margin:10px 0;
+        animation:pulse 1.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1} 50%{opacity:.45}}
+
+  /* ── Zone de statut / vide ────────────────── */
+  .status{
+    max-width:1200px; margin:0 auto; padding:0 16px 8px;
+    font-size:.78rem; color:var(--muted); display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+  }
+  .hero{
+    text-align:center; padding:48px 16px; color:var(--muted);
+  }
+  .hero h2{color:var(--text); font-size:1.3rem}
+
+  footer.site{
+    max-width:1200px; margin:0 auto; padding:16px; border-top:1px solid var(--border);
+    font-size:.72rem; color:var(--muted); text-align:center;
+  }
+
+  /* ── Dialogues ────────────────────────────── */
+  dialog{
+    background:var(--card); color:var(--text); border:1px solid var(--border);
+    border-radius:16px; padding:20px; width:min(92vw,420px);
+  }
+  dialog::backdrop{background:rgba(0,0,0,.5)}
+  dialog h3{margin:0 0 14px; font-size:1rem}
+  fieldset{border:none; margin:0 0 12px; padding:0}
+  label{display:block; font-size:.78rem; color:var(--muted); margin-bottom:4px}
+  input[type=text],input[type=url],select{
+    width:100%; padding:9px 10px; border-radius:10px; font-size:.9rem;
+    border:1px solid var(--border); background:var(--bg-soft); color:var(--text);
+  }
+  .row{display:flex; gap:10px}
+  .row fieldset{flex:1}
+  .dlg-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:16px}
+  .hint{font-size:.72rem; color:var(--accent-2); margin-top:4px; min-height:1em}
+  .toast{
+    position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
+    background:var(--card); border:1px solid var(--border); color:var(--text);
+    border-radius:12px; padding:10px 16px; font-size:.82rem; z-index:50;
+    box-shadow:0 8px 24px rgba(0,0,0,.25); opacity:0; pointer-events:none;
+    transition:opacity .25s;
+  }
+  .toast.show{opacity:1}
+
+  @media (max-width:560px){
+    .top-inner{gap:8px}
+    .logo .sub{display:none}
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="logo">
+      <svg width="30" height="30" viewBox="0 0 64 64" aria-hidden="true">
+        <rect x="2" y="2" width="60" height="60" rx="14" fill="#e0562f"/>
+        <circle cx="22" cy="22" r="7" fill="#ffd166"/>
+        <g stroke="#fff" stroke-width="3" stroke-linecap="round">
+          <line x1="12" y1="38" x2="52" y2="38"/><line x1="12" y1="46" x2="46" y2="46"/>
+          <line x1="12" y1="54" x2="40" y2="54"/>
+        </g>
+      </svg>
+      <div>
+        <h1>Briefing du Matin</h1>
+        <div class="sub" id="today">—</div>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <span class="chip" id="updatedChip" hidden></span>
+    <button class="btn primary" id="refreshBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+      <span>Actualiser</span>
+    </button>
+    <button class="btn" id="installBtn" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 19h16"/></svg>
+      <span>Installer</span>
+    </button>
+    <button class="btn icon" id="addBtn" title="Ajouter une rubrique">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <button class="btn icon" id="settingsBtn" title="Réglages">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.04.04a2 2 0 1 1-2.83 2.83l-.04-.04a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.56 1.7 1.7 0 0 0-1.87.34l-.04.04a2 2 0 1 1-2.83-2.83l.04-.04A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1 1.7 1.7 0 0 0-.34-1.87l-.04-.04a2 2 0 1 1 2.83-2.83l.04.04A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3.04V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.87-.34l.04-.04a2 2 0 1 1 2.83 2.83l-.04.04A1.7 1.7 0 0 0 19.4 9c.14.6.62 1.04 1.24 1.04H21a2 2 0 1 1 0 4h-.09c-.62 0-1.1.44-1.24 1.04z"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="status" id="status"></div>
+<main><div id="root"></div></main>
+
+<footer class="site">
+  Contenus agrégés depuis des flux RSS publics : Google Actualités (FR/EN), France 24, BBC News, The Verge.<br>
+  Lecture via replieurs CORS communautaires (allOrigins, corsproxy.io, CodeTabs) — si un flux ne répond pas, l'application bascule automatiquement.
+</footer>
+
+<!-- Dialogue : nouvelle rubrique -->
+<dialog id="addDlg">
+  <h3>Nouvelle rubrique</h3>
+  <fieldset>
+    <label for="fName">Nom</label>
+    <input type="text" id="fName" placeholder="Ex. Football, BD, Jeux vidéo…" autocomplete="off">
+  </fieldset>
+  <fieldset>
+    <label for="fEmoji">Emoji (facultatif)</label>
+    <input type="text" id="fEmoji" placeholder="⚽" maxlength="4" autocomplete="off">
+  </fieldset>
+  <fieldset>
+    <label for="fType">Type de source</label>
+    <select id="fType">
+      <option value="google">Recherche Google Actualités (mots-clés)</option>
+      <option value="rss">Flux RSS personnalisé (URL)</option>
+    </select>
+  </fieldset>
+  <div class="row">
+    <fieldset style="flex:2">
+      <label for="fQuery">Mots-clés ou URL</label>
+      <input type="text" id="fQuery" placeholder="Ex. football Ligue 1" autocomplete="off">
+    </fieldset>
+    <fieldset>
+      <label for="fLang">Langue</label>
+      <select id="fLang"><option value="fr">FR</option><option value="en">EN</option></select>
+    </fieldset>
+  </div>
+  <div class="hint" id="addHint"></div>
+  <div class="dlg-actions">
+    <button class="btn" id="addCancel">Annuler</button>
+    <button class="btn primary" id="addConfirm">Ajouter</button>
+  </div>
+</dialog>
+
+<!-- Dialogue : réglages -->
+<dialog id="setDlg">
+  <h3>Réglages</h3>
+  <div class="row">
+    <fieldset>
+      <label for="setMax">Titres par rubrique</label>
+      <select id="setMax">
+        <option value="4">4</option><option value="6">6</option>
+        <option value="8">8</option><option value="12">12</option>
+      </select>
+    </fieldset>
+    <fieldset>
+      <label for="setTheme">Thème</label>
+      <select id="setTheme">
+        <option value="auto">Automatique</option><option value="light">Clair</option><option value="dark">Sombre</option>
+      </select>
+    </fieldset>
+  </div>
+  <div class="dlg-actions" style="justify-content:space-between">
+    <div style="display:flex;gap:8px">
+      <button class="btn" id="markAllRead">Tout marquer lu</button>
+      <button class="btn" id="wipeBtn">Effacer les données</button>
+    </div>
+    <button class="btn primary" id="setClose">Fermer</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+/* ══════════════ 1. CONFIGURATION DES SOURCES ══════════════ */
+
+const gn = (q, lang) => lang === "en"
+  ? "https://news.google.com/rss/search?q=" + encodeURIComponent(q) + "&hl=en-US&gl=US&ceid=US:en"
+  : "https://news.google.com/rss/search?q=" + encodeURIComponent(q) + "&hl=fr&gl=FR&ceid=FR:fr";
+
+const DEFAULT_SECTIONS = [
+  { id:"politique", emoji:"🏛️", title:"Politique française", feeds:[
+      { label:"FR", url: gn("politique française") },
+      { label:"EN", url: gn("French politics government France", "en") },
+  ]},
+  { id:"monde", emoji:"🌍", title:"Monde", feeds:[
+      { label:"France 24", url:"https://www.france24.com/fr/rss" },
+      { label:"BBC World", url:"https://feeds.bbci.co.uk/news/world/rss.xml" },
+  ]},
+  { id:"deces", emoji:"🕯️", title:"Personnalités décédées", feeds:[
+      { label:"FR", url: gn('("est décédé" OR "est morte" OR "nous a quittés") when:3d') },
+      { label:"EN", url: gn('("has died" OR "dies at" OR obituary) when:3d', "en") },
+  ]},
+  { id:"cinema", emoji:"🎬", title:"Cinéma & sorties", feeds:[
+      { label:"FR", url: gn('("sortie cinéma" OR "en salles" OR "nouveau film") when:7d') },
+      { label:"EN", url: gn('("box office" OR "movie release" OR "in theaters") when:7d', "en") },
+  ]},
+  { id:"musique", emoji:"🎵", title:"Nouveaux albums", feeds:[
+      { label:"FR", url: gn('("nouvel album" OR "nouveau single") when:7d') },
+      { label:"EN", url: gn('("new album" OR "album release") when:7d', "en") },
+  ]},
+  { id:"expos", emoji:"🎨", title:"Expos & événements · Lyon & Paris", feeds:[
+      { label:"Lyon", url: gn("(exposition OR vernissage OR biennale OR festival) Lyon when:14d") },
+      { label:"Paris", url: gn("(exposition OR vernissage OR biennale OR festival) Paris when:14d") },
+  ]},
+  { id:"tech", emoji:"💻", title:"Tech & science", feeds:[
+      { label:"FR", url: gn("(intelligence artificielle OR découverte scientifique OR innovation) when:2d") },
+      { label:"The Verge", url:"https://www.theverge.com/rss/index.xml" },
+  ]},
+  { id:"eco", emoji:"📈", title:"Économie & finance", feeds:[
+      { label:"FR", url: gn("(économie OR inflation OR bourse) France when:2d") },
+      { label:"BBC Business", url:"https://feeds.bbci.co.uk/news/business/rss.xml" },
+  ]},
+];
+
+/* Repleurs CORS de repli (essayés dans l'ordre si l'accès direct échoue) */
+const PROXIES = [
+  u => u,
+  u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
+  u => "https://corsproxy.io/?url=" + encodeURIComponent(u),
+  u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
+];
+
+/* ══════════════ 2. STOCKAGE (localStorage sécurisé) ══════════════ */
+
+const store = (() => {
+  const mem = {}; let ok = false;
+  try { localStorage.setItem("__bm_test","1"); localStorage.removeItem("__bm_test"); ok = true; } catch(e){}
+  return {
+    get(k, d){ try{ if(!ok) return (k in mem) ? mem[k] : d;
+      const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v);
+    }catch(e){ return d; } },
+    set(k, v){ try{ if(!ok){ mem[k] = v; return; } localStorage.setItem(k, JSON.stringify(v)); }catch(e){} },
+  };
+})();
+
+const K = { data:"bm_data_v1", custom:"bm_custom_v1", read:"bm_read_v1", settings:"bm_settings_v1" };
+
+let settings   = store.get(K.settings, { maxItems: 6, theme: "auto" });
+let readSet    = new Set(store.get(K.read, []));
+let data       = store.get(K.data, null);   // { updatedAt, sections:{ id:{items,errors} } }
+let refreshing = false;
+
+function saveSettings(){ store.set(K.settings, settings); }
+function saveRead(){ store.set(K.read, [...readSet]); }
+
+/* ══════════════ 3. RÉCUPÉRATION & PARSING RSS ══════════════ */
+
+async function fetchWithTimeout(url, ms){
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  try { return await fetch(url, { signal: ctl.signal }); }
+  finally { clearTimeout(t); }
+}
+
+async function fetchFeed(url){
+  let lastErr = null;
+  for (const p of PROXIES){
+    try{
+      const res = await fetchWithTimeout(p(url), 12000);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const text = await res.text();
+      if (!text || text.length < 40) throw new Error("Réponse vide");
+      const items = parseFeed(text);
+      if (items.length) return items;
+      throw new Error("Aucun élément");
+    }catch(e){ lastErr = e; }
+  }
+  throw lastErr || new Error("Flux inaccessible");
+}
+
+function parseFeed(xmlText){
+  const doc = new DOMParser().parseFromString(xmlText, "text/xml");
+  if (doc.querySelector("parsererror")) throw new Error("XML invalide");
+  const nodes = [...doc.querySelectorAll("item"), ...doc.querySelectorAll("entry")];
+  return nodes.map(n => {
+    const title = (n.querySelector("title")?.textContent || "").trim();
+    let link = n.querySelector("link")?.textContent?.trim() || "";
+    if (!link){
+      const l = [...n.querySelectorAll("link")].find(a => (a.getAttribute("rel") || "alternate") === "alternate");
+      link = l?.getAttribute("href") || "";
+    }
+    const src = n.querySelector("source")?.textContent?.trim() || "";
+    const dRaw = n.querySelector("pubDate")?.textContent || n.querySelector("updated")?.textContent
+              || n.querySelector("published")?.textContent || "";
+    const date = dRaw ? (Date.parse(dRaw) || 0) : 0;
+    return { title, link, source: src, date };
+  }).filter(i => i.title && i.link);
+}
+
+/* Nettoie les titres Google News (« Titre - Source ») */
+function splitSource(item){
+  if (item.source) return item;
+  const m = item.title.match(/^(.*)\s+-\s+([^-]{2,40})$/);
+  if (m){ item.title = m[1].trim(); item.source = m[2].trim(); }
+  return item;
+}
+
+function hash(s){ let h = 0; for (let i = 0; i < s.length; i++){ h = (h * 31 + s.charCodeAt(i)) | 0; } return "h" + h; }
+
+async function loadSection(section){
+  const results = await Promise.allSettled(section.feeds.map(f => fetchFeed(f.url)));
+  let items = [], errors = 0;
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled"){
+      r.value.forEach(splitSource).forEach(it => { it.feed = section.feeds[i].label; items.push(it); });
+    } else errors++;
+  });
+  const seen = new Set();
+  items = items.filter(it => {
+    const key = it.title.toLowerCase();
+    if (seen.has(key)) return false; seen.add(key); return true;
+  });
+  items.sort((a, b) => b.date - a.date);
+  return { items: items.slice(0, settings.maxItems), errors };
+}
+
+async function refreshAll(){
+  if (refreshing) return;
+  refreshing = true;
+  refreshBtn.disabled = true;
+  render(); // squelettes de chargement
+  setStatus("⏳ Actualisation des flux…");
+  const sections = [...DEFAULT_SECTIONS, ...store.get(K.custom, [])];
+  const entries = await Promise.all(sections.map(async s => [s.id, await loadSection(s)]));
+  const map = {}; entries.forEach(([id, r]) => map[id] = r);
+  data = { updatedAt: Date.now(), sections: map };
+  store.set(K.data, data);
+  refreshing = false;
+  refreshBtn.disabled = false;
+  render();
+  const errCount = entries.reduce((n, e) => n + e[1].errors, 0);
+  setStatus(errCount
+    ? "⚠️ " + errCount + " flux indisponible(s) — réessaie plus tard. " + updatedText()
+    : "✅ " + updatedText());
+}
+function updatedText(){
+  return "Actualisé à " + new Date(data.updatedAt).toLocaleTimeString("fr-FR", {hour:"2-digit", minute:"2-digit"});
+}
+
+/* ══════════════ 4. RENDU ══════════════ */
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function timeAgo(ts){
+  if (!ts) return "";
+  const d = Date.now() - ts;
+  if (d < 6e5)   return "à l'instant";
+  if (d < 36e5)  return "il y a " + Math.max(1, Math.floor(d / 6e4)) + " min";
+  if (d < 864e5) return "il y a " + Math.floor(d / 36e5) + " h";
+  const j = Math.floor(d / 864e5);
+  return j === 1 ? "hier" : "il y a " + j + " j";
+}
+
+function setStatus(html){ $("status").innerHTML = html; }
+
+function render(){
+  const root = $("root");
+  const sections = [...DEFAULT_SECTIONS, ...store.get(K.custom, [])];
+
+  // Date du jour
+  const dStr = new Date().toLocaleDateString("fr-FR", { weekday:"long", day:"numeric", month:"long", year:"numeric" });
+  $("today").textContent = dStr.charAt(0).toUpperCase() + dStr.slice(1);
+
+  const chip = $("updatedChip");
+  if (data && data.updatedAt){ chip.hidden = false; chip.textContent = updatedText(); }
+
+  if (!data && !refreshing){
+    root.innerHTML = `
+      <div class="hero">
+        <h2>Bonjour 👋</h2>
+        <p>Ton briefing matinal n'est pas encore chargé.<br>
+        Appuie sur <strong>« Actualiser »</strong> pour récupérer les titres du jour.</p>
+      </div>`;
+    return;
+  }
+
+  root.innerHTML = '<div class="grid">' + sections.map(sec => {
+    const st = refreshing ? null : (data && data.sections ? data.sections[sec.id] : null);
+    const isCustom = !DEFAULT_SECTIONS.some(d => d.id === sec.id);
+
+    // En-tête de carte
+    let head = `<div class="card-head"><span class="emoji">${esc(sec.emoji || "📰")}</span>
+      <h2>${esc(sec.title)}</h2>`;
+    if (refreshing) head += '<span class="badge">…</span>';
+    else if (st){
+      const unread = st.items.filter(it => !readSet.has(hash(it.title))).length;
+      head += unread
+        ? `<span class="badge new">${unread} nouveau${unread > 1 ? "x" : ""}</span>`
+        : '<span class="badge">0</span>';
+    }
+    if (isCustom) head += `<button class="del" data-del="${esc(sec.id)}" title="Supprimer la rubrique">✕</button>`;
+    head += "</div>";
+
+    // Corps de carte
+    let body;
+    if (refreshing && !st){
+      body = Array.from({length: Math.min(4, settings.maxItems)}, () => '<div class="skel"></div>').join("");
+    } else if (!st){
+      body = '<div class="meta" style="padding:10px 0">Aucune donnée — appuie sur « Actualiser ».</div>';
+    } else {
+      const list = st.items.map(it => {
+        const h = hash(it.title);
+        return `<li class="${readSet.has(h) ? "seen" : ""}">
+          <a class="t" href="${esc(it.link)}" target="_blank" rel="noopener noreferrer" data-h="${h}">${esc(it.title)}</a>
+          <div class="meta">${esc(it.feed)}${it.source ? " · " + esc(it.source) : ""}${it.date ? " · " + timeAgo(it.date) : ""}</div>
+        </li>`;
+      }).join("");
+      const err = st.errors ? `<div class="feed-err">⚠️ ${st.errors} flux indisponible${st.errors > 1 ? "s" : ""}</div>` : "";
+      body = `<ul class="items">${list}</ul>${err}`;
+    }
+    return `<section class="card">${head}${body}</section>`;
+  }).join("") + "</div>";
+
+  // Clic sur un titre → marqué comme lu
+  root.querySelectorAll("a[data-h]").forEach(a => {
+    a.addEventListener("click", () => {
+      readSet.add(a.dataset.h); saveRead();
+      const li = a.closest("li"); if (li) li.classList.add("seen");
+    });
+  });
+  // Suppression d'une rubrique personnalisée
+  root.querySelectorAll("button[data-del]").forEach(b => {
+    b.addEventListener("click", () => {
+      const custom = store.get(K.custom, []).filter(c => c.id !== b.dataset.del);
+      store.set(K.custom, custom);
+      if (data && data.sections) delete data.sections[b.dataset.del];
+      store.set(K.data, data);
+      render(); toast("Rubrique supprimée");
+    });
+  });
+}
+
+function toast(msg){
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+/* ══════════════ 5. THÈME ══════════════ */
+
+function applyTheme(){
+  let th = settings.theme;
+  if (th === "auto") th = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  document.documentElement.dataset.theme = th;
+}
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (settings.theme === "auto") applyTheme(); });
+
+/* ══════════════ 6. MANIFESTE PWA (injecté) ══════════════ */
+
+/* Manifeste PWA : fichier statique manifest.json à la racine du site.
+   Un repli inline est injecté si le fichier est absent (usage hors dépôt). */
+const ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#e0562f"/><circle cx="22" cy="22" r="7" fill="#ffd166"/><g stroke="#fff" stroke-width="3" stroke-linecap="round"><line x1="12" y1="38" x2="52" y2="38"/><line x1="12" y1="46" x2="46" y2="46"/><line x1="12" y1="54" x2="40" y2="54"/></g></svg>';
+(async function ensureManifest(){
+  try{
+    const res = await fetch("manifest.json", { method: "HEAD" });
+    if (res.ok) return; // manifest.json présent → rien à injecter
+  }catch(e){}
+  try{
+    const manifest = {
+      name: "Briefing du Matin",
+      short_name: "Briefing",
+      description: "Briefing matinal : politique, monde, culture, sorties, expos.",
+      start_url: location.pathname + location.search,
+      scope: "./",
+      display: "standalone",
+      background_color: "#0f172a",
+      theme_color: "#0f172a",
+      icons: [
+        { src: "data:image/svg+xml," + encodeURIComponent(ICON_SVG), sizes: "any", type: "image/svg+xml", purpose: "any" },
+        { src: "data:image/svg+xml," + encodeURIComponent(ICON_SVG), sizes: "any", type: "image/svg+xml", purpose: "maskable" },
+      ],
+    };
+    const link = document.createElement("link");
+    link.rel = "manifest";
+    link.href = "data:application/manifest+json," + encodeURIComponent(JSON.stringify(manifest));
+    document.head.appendChild(link);
+    const apple = document.createElement("link");
+    apple.rel = "apple-touch-icon";
+    apple.href = manifest.icons[0].src;
+    document.head.appendChild(apple);
+  }catch(e){}
+})();
+
+/* Service worker optionnel : enregistré seulement si ./sw.js existe */
+if ("serviceWorker" in navigator){
+  addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+}
+
+/* Bouton « Installer » (Chrome/Edge/Android) */
+let deferredPrompt = null;
+addEventListener("beforeinstallprompt", e => {
+  e.preventDefault(); deferredPrompt = e; $("installBtn").hidden = false;
+});
+$("installBtn").addEventListener("click", async () => {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt(); await deferredPrompt.userChoice; deferredPrompt = null;
+  $("installBtn").hidden = true;
+});
+
+/* ══════════════ 7. DIALOGUES ══════════════ */
+
+$("addBtn").addEventListener("click", () => {
+  $("fName").value = ""; $("fEmoji").value = ""; $("fQuery").value = "";
+  $("addHint").textContent = "";
+  $("addDlg").showModal();
+});
+$("addCancel").addEventListener("click", () => $("addDlg").close());
+$("addConfirm").addEventListener("click", () => {
+  const name = $("fName").value.trim();
+  const query = $("fQuery").value.trim();
+  const type = $("fType").value;
+  const lang = $("fLang").value;
+  if (!name) return $("addHint").textContent = "Donne un nom à la rubrique.";
+  let url;
+  if (type === "rss"){
+    if (!/^https?:\/\//i.test(query)) return $("addHint").textContent = "L'URL doit commencer par http(s)://";
+    url = query;
+  } else {
+    if (!query) return $("addHint").textContent = "Saisis au moins un mot-clé.";
+    url = gn(query, lang);
+  }
+  const custom = store.get(K.custom, []);
+  custom.push({ id: "c_" + Date.now(), emoji: $("fEmoji").value.trim() || "📰", title: name,
+                feeds: [{ label: lang.toUpperCase(), url }] });
+  store.set(K.custom, custom);
+  $("addDlg").close();
+  toast("Rubrique ajoutée ✓");
+  refreshAll();
+});
+$("fType").addEventListener("change", () => {
+  $("fQuery").placeholder = $("fType").value === "rss"
+    ? "https://exemple.com/flux.rss" : "Ex. football Ligue 1";
+  $("fLang").disabled = $("fType").value === "rss";
+});
+
+$("settingsBtn").addEventListener("click", () => {
+  $("setMax").value = String(settings.maxItems);
+  $("setTheme").value = settings.theme;
+  $("setDlg").showModal();
+});
+$("setClose").addEventListener("click", () => $("setDlg").close());
+$("setMax").addEventListener("change", () => { settings.maxItems = +$("setMax").value; saveSettings(); refreshAll(); });
+$("setTheme").addEventListener("change", () => { settings.theme = $("setTheme").value; saveSettings(); applyTheme(); });
+$("markAllRead").addEventListener("click", () => {
+  const secs = (data && data.sections) ? Object.values(data.sections) : [];
+  secs.forEach(s => s.items.forEach(it => readSet.add(hash(it.title))));
+  saveRead(); render(); toast("Tout marqué comme lu");
+});
+$("wipeBtn").addEventListener("click", () => {
+  store.set(K.data, null); store.set(K.custom, []); store.set(K.read, []);
+  data = null; readSet = new Set();
+  render(); toast("Données effacées");
+});
+
+/* ══════════════ 8. DÉMARRAGE ══════════════ */
+
+const refreshBtn = $("refreshBtn");
+refreshBtn.addEventListener("click", refreshAll);
+
+applyTheme();
+render();
+
+const STALE = 2 * 3600 * 1000; // 2 h
+if (!data || Date.now() - (data.updatedAt || 0) > STALE) refreshAll();
+addEventListener("visibilitychange", () => {
+  if (!document.hidden && data && Date.now() - data.updatedAt > STALE && navigator.onLine) refreshAll();
+});
+setStatus(data ? "✅ " + updatedText() + " — rafraîchissement automatique si les données datent de plus de 2 h."
+               : "Aucune donnée en cache.");
+</script>
+</body>
+</html>
