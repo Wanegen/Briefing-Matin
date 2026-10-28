@@ -41,10 +41,13 @@
 
   /* ── En-tête ─────────────────────────────── */
   header.top{
-    position:sticky; top:0; z-index:10;
+    position:sticky; top:0; z-index:20;
     backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
     background:color-mix(in srgb, var(--bg) 82%, transparent);
     border-bottom:1px solid var(--border);
+    /* Mode app iOS : la barre de statut système chevauche le haut de l'écran.
+       On réserve la zone de sécurité pour que les boutons restent cliquables. */
+    padding-top:env(safe-area-inset-top, 0px);
   }
   .top-inner{
     max-width:1200px; margin:0 auto; padding:12px 16px;
@@ -60,9 +63,11 @@
     border:1px solid var(--border); border-radius:999px; padding:3px 10px; white-space:nowrap;
   }
   .btn{
-    display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center; gap:6px; cursor:pointer;
     background:var(--card); color:var(--text); border:1px solid var(--border);
     border-radius:10px; padding:8px 12px; font-size:.85rem; font-weight:500;
+    -webkit-tap-highlight-color:transparent; touch-action:manipulation;
+    min-height:44px; /* cible tactile confortable (iOS/Android) */
   }
   .btn:hover{border-color:var(--accent)}
   .btn:active{transform:translateY(1px)}
@@ -193,7 +198,7 @@
 
 <footer class="site">
   Contenus agrégés depuis des flux RSS publics : Google Actualités (FR/EN), France 24, BBC News, The Verge.<br>
-  Lecture via replieurs CORS communautaires (allOrigins, RSS2JSON, CodeTabs) — si un flux ne répond pas, l'application bascule automatiquement.
+  Données pré-récupérées par GitHub Actions (data.json, même origine) — replieurs CORS en repli pour les rubriques personnalisées.
 </footer>
 
 <!-- Dialogue : nouvelle rubrique -->
@@ -304,12 +309,12 @@ const DEFAULT_SECTIONS = [
   ]},
 ];
 
-/* Repleurs CORS de repli (essayés dans l'ordre si l'accès direct échoue).
-   corsproxy.io retiré (clé API obligatoire depuis 2026). */
+/* Repleurs CORS de repli (essayés dans l'ordre si data.json ne couvre pas une
+   rubrique, p. ex. rubriques personnalisées). La source principale est
+   data.json, généré côté GitHub Actions → même origine, pas de CORS. */
 const PROXIES = [
-  { kind: "xml",  build: u => u },
-  { kind: "xml",  build: u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u) },
   { kind: "json", build: u => "https://api.rss2json.com/v1/api.json?rss_url=" + encodeURIComponent(u) },
+  { kind: "xml",  build: u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u) },
   { kind: "xml",  build: u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u) },
 ];
 
@@ -356,8 +361,7 @@ async function fetchWithTimeout(url, ms){
 
 async function fetchFeed(url){
   let lastErr = null;
-  for (const p of PROXIES){
-    try{
+  for (const p of PROXIES){    try{
       const res = await fetchWithTimeout(p.build(url), 12000);
       if (!res.ok) throw new Error("HTTP " + res.status);
       const text = await res.text();
@@ -411,6 +415,19 @@ function splitSource(item){
 
 function hash(s){ let h = 0; for (let i = 0; i < s.length; i++){ h = (h * 31 + s.charCodeAt(i)) | 0; } return "h" + h; }
 
+/* data.json : flux pré-récupérés par GitHub Actions (même origine → pas de
+   CORS). C'est la source principale ; les replieurs ne servent que pour
+   les rubriques absentes de data.json. */
+async function fetchServerData(){
+  try{
+    const res = await fetchWithTimeout("data.json?ts=" + Date.now(), 10000);
+    if (!res.ok) return null;
+    const d = await res.json();
+    if (!d || !d.sections) return null;
+    return d;
+  }catch(e){ return null; }
+}
+
 async function loadSection(section){
   const results = await Promise.allSettled(section.feeds.map(f => fetchFeed(f.url)));
   let items = [], errors = 0;
@@ -435,9 +452,18 @@ async function refreshAll(){
   render(); // squelettes de chargement
   setStatus("⏳ Actualisation des flux…");
   const sections = [...DEFAULT_SECTIONS, ...store.get(K.custom, [])];
-  const entries = await pool(sections.map(s => async () => [s.id, await loadSection(s)]), 3);
+  setStatus("⏳ Actualisation des flux…");
+  const server = await fetchServerData();
+  const entries = await pool(sections.map(s => async () => {
+    const sd = server && server.sections ? server.sections[s.id] : null;
+    if (sd && Array.isArray(sd.items) && sd.items.length){
+      // Données déjà récupérées côté GitHub → aucune requête CORS nécessaire
+      return [s.id, { items: sd.items.slice(0, settings.maxItems), errors: sd.errors || 0 }];
+    }
+    return [s.id, await loadSection(s)];
+  }), 3);
   const map = {}; entries.forEach(([id, r]) => map[id] = r);
-  data = { updatedAt: Date.now(), sections: map };
+  data = { updatedAt: (server && server.updatedAt) || Date.now(), sections: map };
   store.set(K.data, data);
   refreshing = false;
   refreshBtn.disabled = false;
